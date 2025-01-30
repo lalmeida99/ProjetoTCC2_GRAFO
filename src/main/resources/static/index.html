@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Grafo de Conhecimento Interativo</title>
+  <script src="https://d3js.org/d3.v6.min.js"></script>
+  <style>
+    svg {
+      width: 100%;
+      height: 100vh;
+      cursor: grab;
+    }
+    .link {
+      fill: none;
+      stroke: #ccc;
+      stroke-width: 1.5px;
+    }
+    .node circle {
+      stroke-width: 2px;
+      cursor: pointer;
+    }
+    .node text {
+      font-size: 12px;
+    }
+    .tooltip {
+      position: absolute;
+      background-color: white;
+      border: 1px solid #ccc;
+      padding: 5px;
+      border-radius: 4px;
+      pointer-events: none;
+      font-size: 12px;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <svg></svg>
+  <script>
+    const svg = d3.select("svg")
+      .attr("viewBox", [-500, -500, 1000, 1000])
+      .call(d3.zoom().on("zoom", (event) => {
+        g.attr("transform", event.transform);
+      }))
+      .append("g");
+
+    const g = svg.append("g");
+
+    // Função para transformar os dados do backend
+    function transformData(data) {
+      return {
+        name: "root",
+        children: data.diseases.map(disease => ({
+          name: disease.disease,
+          children: disease.symptoms.map(symptom => ({ name: symptom }))
+        }))
+      };
+    }
+
+    // Carrega os dados da API e transforma para o formato necessário
+    d3.json('/api/hierarchy').then(data => {
+      const transformedData = transformData(data);
+      const root = d3.hierarchy(transformedData);
+
+      // Inicializar nós colapsados
+      root.children.forEach(collapse);
+
+      const treeLayout = d3.tree().size([2 * Math.PI, 450]);
+
+      function collapse(node) {
+        if (node.children) {
+          node._children = node.children;
+          node.children = null;
+          node._children.forEach(collapse);
+        }
+      }
+
+      update(root);
+
+      function update(source) {
+        treeLayout(root);
+
+        const nodes = root.descendants();
+        const links = root.links();
+
+        // Renderiza links com animação
+        const link = g.selectAll("path.link")
+          .data(links, d => d.target.data.name);
+
+        link.enter()
+          .append("path")
+          .attr("class", "link")
+          .attr("d", d3.linkRadial()
+            .angle(d => source.x)
+            .radius(d => source.y))
+          .merge(link)
+          .transition().duration(500)
+          .attr("d", d3.linkRadial()
+            .angle(d => d.x)
+            .radius(d => d.y));
+
+        link.exit().remove();
+
+        // Renderiza nós com animação
+        const node = g.selectAll("g.node")
+          .data(nodes, d => d.data.name);
+
+        const nodeEnter = node.enter()
+          .append("g")
+          .attr("class", "node")
+          .attr("transform", d => `
+            rotate(${source.x * 180 / Math.PI - 90})
+            translate(${source.y}, 0)
+          `)
+          .on("click", (event, d) => {
+            if (d.children) {
+              d._children = d.children;
+              d.children = null;
+            } else {
+              d.children = d._children;
+              d._children = null;
+            }
+            update(d);
+          });
+
+        nodeEnter.append("circle")
+          .attr("r", 6)
+          .attr("fill", d => d._children ? "#4CAF50" : "#FF5722");
+
+        nodeEnter.append("text")
+          .attr("dy", "0.35em")
+          .attr("x", d => d.x < Math.PI ? 10 : -10)
+          .style("text-anchor", d => d.x < Math.PI ? "start" : "end")
+          .text(d => d.data.name)
+          .attr("transform", d => d.x >= Math.PI ? "rotate(180)" : null);
+
+        const nodeUpdate = node.merge(nodeEnter);
+
+        nodeUpdate.transition().duration(500)
+          .attr("transform", d => `
+            rotate(${d.x * 180 / Math.PI - 90})
+            translate(${d.y}, 0)
+          `);
+
+        nodeUpdate.select("circle")
+          .attr("fill", d => d._children ? "#4CAF50" : "#FF5722");
+
+        node.exit().remove();
+      }
+    });
+  </script>
+</body>
+</html>
